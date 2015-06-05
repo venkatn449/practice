@@ -1,0 +1,315 @@
+package com.gm.gmaudio.apps;
+
+import gm.entertainment.StationData;
+import gm.tuner.AutoStoreStatus;
+import gm.tuner.RadioText;
+import gm.tuner.RadioTextPlus;
+import gm.tuner.TunerFavorite;
+
+import com.gm.gmaudio.log.Logger;
+import com.gm.gmaudio.radio.TunerAdapter;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.media.browse.MediaBrowser;
+import android.media.browse.MediaBrowser.MediaItem;
+import android.media.session.MediaController;
+import android.os.Bundle;
+import android.os.Handler;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
+import android.widget.ArrayAdapter;
+import gm.widget.GMListView;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.ToggleButton;
+import android.os.Looper;
+
+import com.gm.gmaudio.AudioApp;
+import com.gm.gmaudio.AudioCalibrationManager;
+import com.gm.gmaudio.BaseFragment;
+import com.gm.gmaudio.Interfaces.Fragmentloader;
+import com.gm.gmaudio.R;
+import com.gm.gmaudio.apps.AppBrowseFragment.BrowseAdapter;
+import com.gm.gmaudio.apps.AppBrowseFragment.BrowseAdapter.ViewHolder;
+import com.gm.gmaudio.audio.StationBrowseData;
+import com.gm.gmaudio.radio.am.StationBrowseTunerActivity;
+import com.gm.gmaudio.utils.AdaptionSpeechServiceUtils;
+
+/**
+ * 
+ * @author Harman Automotives
+ * 
+ */
+public class AppBrowseFragment extends BaseFragment {
+	static final String TAG = AppBrowseFragment.class.getSimpleName();
+	private static final int HANDLER_MESSAGE_WHAT = 100;
+	private static final int MIN_ROWS_ALPHA_INDEX = 5;
+
+	private BrowseAdapter mBrowserAdapter;
+
+	private GMListView mMediaList;
+	
+	public static final String ARG_MEDIA_ID = "media_id";
+	public static final String ARG_TITLE = "title";
+	public static final String ARG_PKGNAME = "pkgname";
+	public static final String ARG_SERVICENAME = "svcname";
+
+	private Activity activity;
+
+	private View mCategoriesView, mUpdateStationsView;
+	
+	// Below is the layout for holding header views such as Categories View, Update Station List View etc.,
+	private LinearLayout mListHeaderViews;
+	
+	private LinearLayout mNoContentView;
+	
+	private TextView mTitle;
+
+	// The mediaId to be used for subscribing for children using the MediaBrowser.
+    private String mMediaId;
+    private String mPkgname;
+    private String mServicename;
+    
+  //The MediaBrowser object for retrieving the service and session token
+    public static MediaBrowser mMediaBrowser;
+
+    public static interface FragmentDataHelper {
+        void onMediaItemSelected(MediaBrowser.MediaItem item);
+    }
+	
+	@Override
+	public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
+
+		activity = getActivity();
+
+		View v = activity.getLayoutInflater().inflate(R.layout.radio_browse_layout, null);
+		mMediaList = ((GMListView) v.findViewById(R.id.stations_list));
+		mMediaList.setWrapScrollThreshold(MIN_ROWS_ALPHA_INDEX);
+
+		final TextView bubbleText = (TextView) v.findViewById(R.id.zoom_bubble);
+		mBrowserAdapter = new BrowseAdapter(activity);
+	
+		mListHeaderViews = (LinearLayout)v.findViewById(R.id.browse_header_views);
+		
+		mNoContentView = (LinearLayout)v.findViewById(R.id.no_content_view);
+		
+		if(mNoContentView != null){
+			mTitle = (TextView)mNoContentView.findViewById(R.id.no_content_label);
+		}
+
+		if (mListHeaderViews != null) {
+			mListHeaderViews.setVisibility(View.VISIBLE);
+
+			// Creating Categories view adding as Listviews header
+			if (mCategoriesView != null) {
+				mListHeaderViews.removeView(mCategoriesView);
+			}
+			
+
+			mMediaList.setAdapter(mBrowserAdapter);
+
+			mMediaList.setOnItemClickListener(new OnItemClickListener() {
+
+				@SuppressLint("HandlerLeak")
+				@Override
+				public void onItemClick(AdapterView<?> adapterView, View arg1, final int position, long arg3) {
+					Logger.d(TAG, "item clicked!");
+					MediaItem item = mBrowserAdapter.getItem(position);
+					FragmentDataHelper listener = (FragmentDataHelper) getActivity();
+                    listener.onMediaItemSelected(item);
+				}
+			});
+		}
+
+		Bundle args = getArguments();
+        mMediaId = args.getString(ARG_MEDIA_ID, null);
+        mPkgname = args.getString(ARG_PKGNAME, null);
+        mServicename = args.getString(ARG_SERVICENAME, null);
+        String title = args.getString(ARG_TITLE, null);
+        if(mTitle != null){
+        	mTitle.setText(title);
+        }
+
+        Logger.d(TAG, "onCreateView...");
+        
+		return v;
+	}
+
+	
+
+	private void displayNoContentView() {
+	    if(mListHeaderViews != null){
+	    	mListHeaderViews.setVisibility(View.GONE);
+	    }
+	    
+	    if(mNoContentView != null){
+	    	mNoContentView.setVisibility(View.VISIBLE);
+	    }
+    }
+
+	
+	@Override
+	public void onDestroy() {
+		super.onDestroy();
+	}
+	
+
+
+    private MediaBrowser.SubscriptionCallback mSubscriptionCallback = new MediaBrowser.SubscriptionCallback() {
+
+        @Override
+        public void onChildrenLoaded(String parentId, List<MediaBrowser.MediaItem> children) {
+        	if(mBrowserAdapter == null){
+        		mBrowserAdapter = new BrowseAdapter(getActivity());
+        	}
+            mBrowserAdapter.clear();
+            mBrowserAdapter.notifyDataSetInvalidated();
+            for (MediaBrowser.MediaItem item : children) {
+            	Logger.d(TAG, "adding "+item.getDescription().toString());
+                mBrowserAdapter.add(item);
+            }
+            mBrowserAdapter.notifyDataSetChanged();
+        }
+
+        @Override
+        public void onError(String id) {
+            Toast.makeText(getActivity(), "error loading media",
+                    Toast.LENGTH_LONG).show();
+        }
+    };
+
+    
+    public static AppBrowseFragment newInstance(String mediaId, String title, String pkgname, String svcname) {
+        Bundle args = new Bundle();
+        args.putString(ARG_MEDIA_ID, mediaId);
+        args.putString(ARG_TITLE, title);
+        args.putString(ARG_PKGNAME, pkgname);
+        args.putString(ARG_SERVICENAME, svcname);
+        AppBrowseFragment fragment = new AppBrowseFragment();
+        fragment.setArguments(args);
+        Logger.d(TAG, "returning new fragment. ");
+        return fragment;
+    }
+    
+    private MediaBrowser.ConnectionCallback mConnectionCallback =
+            new MediaBrowser.ConnectionCallback() {
+        @Override
+        public void onConnected() {
+        	if(mMediaBrowser.isConnected()){
+	            Logger.d(TAG, "onConnected: session token " + mMediaBrowser.getSessionToken());
+	
+	            if (mMediaId == null) {
+	                mMediaId = mMediaBrowser.getRoot();
+	            }
+	            mMediaBrowser.subscribe(mMediaId, mSubscriptionCallback);
+        	}
+        }
+
+        @Override
+        public void onConnectionFailed() {
+        	Logger.d(TAG, "onConnectionFailed");
+        }
+
+        @Override
+        public void onConnectionSuspended() {
+        	Logger.d(TAG, "onConnectionSuspended");
+            getActivity().setMediaController(null);
+        }
+    };
+    
+    
+    
+    @Override
+    public void onStart() {
+        super.onStart();
+        Logger.d(TAG, "onStart ");
+        if(mPkgname != null && mServicename != null){
+        	//dont know why we need to create browser every time to get the content
+        	//if we don't do like this, the content will not be shown the second time we
+        	//enter the fragment
+	        mMediaBrowser = new MediaBrowser(getActivity(),
+	                new ComponentName(mPkgname, mServicename), mConnectionCallback, null);
+	        if(mMediaBrowser != null){
+	            Logger.d(TAG, "Connecting to the service.");
+	            mMediaBrowser.connect();
+	        }
+        }
+    }
+    
+    @Override
+    public void onResume(){
+    	super.onResume();
+    	Logger.d(TAG, "onResume ");
+    }
+    
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        Logger.d(TAG, "onStop ");
+    }
+
+
+	// An adapter for showing the list of browsed MediaItem's
+    public static class BrowseAdapter extends ArrayAdapter<MediaBrowser.MediaItem> {
+
+        public BrowseAdapter(Context context) {
+            super(context, R.layout.radio_browse_row_layout, new ArrayList<MediaBrowser.MediaItem>());
+        }
+
+        class ViewHolder {
+    		TextView name;
+    		TextView frequency;
+    		ToggleButton favourite;
+    		ImageView currentplaying;
+    	}
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+
+            ViewHolder holder;
+
+            if (convertView == null) {
+    			convertView = LayoutInflater.from(getContext())
+                        .inflate(R.layout.radio_browse_row_layout, parent, false);
+    			holder = new ViewHolder();
+    			holder.name = (TextView) convertView.findViewById(R.id.stationname);
+    			holder.frequency = (TextView) convertView.findViewById(R.id.frequencyname);
+    			holder.favourite = (ToggleButton) convertView.findViewById(R.id.img_audio_fav_big);
+    			holder.currentplaying = (ImageView) convertView.findViewById(R.id.current_playing);
+    			convertView.setTag(holder);
+    		}
+    		else {
+    			holder = (ViewHolder) convertView.getTag();
+    		}
+
+            MediaBrowser.MediaItem item = getItem(position);
+            
+			
+			holder.name.setText(item.getDescription().getTitle());
+
+			holder.frequency.setText(item.getDescription().getDescription());
+            
+            
+            return convertView;
+        }
+    }
+
+}
