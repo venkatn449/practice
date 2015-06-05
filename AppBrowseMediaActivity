@@ -1,0 +1,359 @@
+package com.gm.gmaudio.apps;
+
+import gm.entertainment.StationData;
+
+import java.util.ArrayList;
+import java.util.Set;
+import java.util.Stack;
+
+import android.content.Intent;
+import android.media.browse.MediaBrowser;
+import android.media.MediaDescription;
+import android.media.session.MediaController;
+import android.os.Bundle;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.view.ViewPager;
+import android.support.v4.view.ViewPager.OnPageChangeListener;
+import android.util.Log;
+import android.view.View;
+import android.view.ViewGroup;
+
+
+import com.gm.gmaudio.AudioApp;
+import com.gm.gmaudio.BaseActivity;
+import com.gm.gmaudio.Interfaces.Fragmentloader;
+import com.gm.gmaudio.R;
+import com.gm.gmaudio.controller.TunerController;
+import com.gm.gmaudio.log.Logger;
+import com.gm.gmaudio.media.browse.MediaBrowseFragment;
+import com.gm.gmaudio.radio.CategoriesUtil;
+import com.gm.gmaudio.radio.NowPlayingRadioFragment;
+import com.gm.gmaudio.radio.TunerBrowseFragment;
+import com.gm.gmaudio.utils.GMAudioContansts;
+
+/**
+ * @author Harman Automotive
+ */
+public class AppBrowseMediaActivity extends BaseActivity implements Fragmentloader,AppBrowseFragment.FragmentDataHelper {
+	
+	public static final String TAG = AppBrowseMediaActivity.class.getSimpleName();
+
+	public static final String NEED_CATEGORIES = "need_categories";
+
+	// Below are the static variables for caching the Screens. When User returns
+	// to browse list screen in thesame ignition cycle then we need to show the
+	// same screen where user has closed the activity
+	private static Stack<String> sFragmentTitles = new Stack<String>();
+
+	private static ArrayList<Fragment> sCachedFragments = new ArrayList<Fragment>();
+
+	private static String sStationsFilterType = "";
+
+	private CategoriesUtil mCatUtil;
+
+	private String mCurAppName;
+	public String m3rdAppPkgName;
+	public String m3rdAppSvcName;
+	
+	private ViewPager mViewPager;
+	private FragmentPagerAdapter mPagerAdapter;
+	
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+		setContentView(R.layout.apps_browse);
+		super.onCreate(savedInstanceState);
+
+		Intent intent = getIntent();
+		if(intent != null){
+			mCurAppName = intent.getStringExtra(GMAudioContansts.ThirdPartyApps.KEY_APP_NAME);
+			m3rdAppPkgName = intent.getStringExtra(GMAudioContansts.ThirdPartyApps.KEY_PACKAGE_NAME);
+			m3rdAppSvcName = intent.getStringExtra(GMAudioContansts.ThirdPartyApps.KEY_SERVICE_NAME);
+		}
+		
+		
+		if (sCachedFragments == null) {
+			sCachedFragments = new ArrayList<Fragment>();
+		}
+
+		
+		
+		mViewPager = (ViewPager) findViewById(R.id.viewPager);
+		mViewPager.setOffscreenPageLimit(4);
+		mPagerAdapter = new FragmentPagerAdapter(getSupportFragmentManager());
+		mViewPager.setOnPageChangeListener(mOnPageChangeListener);
+		
+		mViewPager.setAdapter(mPagerAdapter);
+		
+		/**
+		 * Checking if the fragments are already cached. If fragments are cached
+		 * then we need to show the latest screen
+		 */
+		if (sCachedFragments.size() > 0) {
+
+			Fragment fragment = (Fragment) sCachedFragments.get(sCachedFragments.size() - 1);
+			String title = "";
+			if (sFragmentTitles.size() >= sCachedFragments.size() - 1) {
+				title = sFragmentTitles.get(sCachedFragments.size() - 1);
+			}
+			mViewPager.setCurrentItem(0);
+			setTitle(title);
+		}
+		// If the fragments are not cached then create new fragment with all
+		// stations list
+		else {
+			sStationsFilterType = getString(R.string.audio_all).toUpperCase();
+			//TODO:The title should be changed automatically as the 3rd app changed. 
+			loadFragment(AppBrowseFragment.newInstance(null,mCurAppName,m3rdAppPkgName,m3rdAppSvcName), mCurAppName);
+		}
+		
+		
+	}
+	
+	@Override
+	public void onResume(){
+		super.onResume();
+		if(mPagerAdapter != null){
+			Logger.d(TAG, "onResume");
+			mPagerAdapter.notifyDataSetChanged();
+		}
+	}
+	
+	@Override
+    public void onMediaItemSelected(MediaBrowser.MediaItem item) {
+		if(item == null){
+			Logger.d(TAG, "item is null.");
+			return;
+		}
+		if (item.isPlayable()) {
+			Logger.d(TAG, "item is Playable.");
+			//implement play after select a song.
+			if(NowPlayingAppsFragment.mMediaController != null){
+				MediaController.TransportControls transportControls = 
+							NowPlayingAppsFragment.mMediaController.getTransportControls();
+				if(transportControls != null){
+					transportControls.playFromMediaId(item.getMediaId(), null);
+					finish();
+				}
+			}
+        } else if (item.isBrowsable()) {
+        	Logger.d(TAG, "item is Browsable.");
+        	String nextMediaId = null;
+        	//get the media id of next fragment in the stack
+        	int index = mViewPager.getCurrentItem();
+        	if(sCachedFragments.size()>(index+1)){
+        		Fragment f = sCachedFragments.get(index+1);
+        		if(f != null && f.getArguments() != null){
+        			nextMediaId = f.getArguments().getString(AppBrowseFragment.ARG_MEDIA_ID);
+        		}
+        	}
+        	
+        	//if the selected item is not same as the next one in stack,
+        	//it means user select a different path, then we need remove the original 
+        	//fragments in stack from the click point.
+        	Logger.d(TAG, "index="+index);
+        	Logger.d(TAG, "nextMediaId="+nextMediaId);
+        	Logger.d(TAG, "item.getMediaId()="+item.getMediaId());
+        	Logger.d(TAG, "sCachedFragments.size()="+sCachedFragments.size());
+        	if(nextMediaId == null || (nextMediaId != null && !nextMediaId.equals(item.getMediaId()))){
+        		if((nextMediaId != null && !nextMediaId.equals(item.getMediaId()))){
+	        		for(int i=index+1;i<sCachedFragments.size();i++){
+	        			Logger.d(TAG, "remoing fragment "+i);
+	        			sCachedFragments.remove(i);
+	        			if(sFragmentTitles.size()>i){
+	        				sFragmentTitles.remove(i);
+	        			}
+	        		}
+        		}
+        		//create new fragment
+    			MediaDescription ds = item.getDescription();
+    			String title = "";
+    			if(ds != null){
+    				CharSequence cs = ds.getTitle();
+    				if(cs != null){
+    					title = cs.toString();
+    				}
+    			}
+            	loadFragment(AppBrowseFragment.newInstance(item.getMediaId(), title,m3rdAppPkgName,m3rdAppSvcName), title);
+        	}else{//clicked the original path
+        		Logger.d(TAG, "show node "+nextMediaId);
+        		mViewPager.setCurrentItem(index+1);
+        	}        	
+        	
+        }
+	}
+	
+	/**
+	 * This is used to load new fragment
+	 */
+	public void loadFragment(Fragment fragment, String title) {
+		sFragmentTitles.push(title);
+		sCachedFragments.add(fragment);
+		setTitle(title);
+		mPagerAdapter.notifyDataSetChanged();	
+		mViewPager.setCurrentItem(sCachedFragments.size()-1);
+		Logger.d(TAG, "adding new fragment, sCachedFragments.size()="+sCachedFragments.size());
+	}
+
+	@Override
+	public void onHeaderBackKey(View view) {
+		onBackPressed();
+	}
+
+	@Override
+	public void onBackPressed() {
+		if (sCachedFragments.size() > 1) {
+			Logger.d(TAG, "removing fragment "+(sCachedFragments.size()-1));
+			setIntent(getIntent().putExtra(NEED_CATEGORIES, true));
+
+			Fragment f = sCachedFragments.get(sCachedFragments.size()-1);
+
+			sCachedFragments.remove(sCachedFragments.size()-1);
+			
+			mPagerAdapter.notifyDataSetChanged();
+			setTitle(getBackTitle());
+
+			mViewPager.setCurrentItem(sCachedFragments.size()-1);
+		}
+		else {
+			sCachedFragments.clear();
+			sFragmentTitles.clear();
+			super.onBackPressed();
+		}
+	}
+
+	private String getBackTitle() {
+		sFragmentTitles.pop();
+		if (sFragmentTitles.size() > 0) {
+			return sFragmentTitles.get(sFragmentTitles.size() - 1);
+		}
+		return "";
+	}
+
+	/**
+	 * This method is used to set the filter type selected from the categories
+	 * list
+	 * 
+	 * @param filter
+	 */
+	public void setFilterTypeForStations(String filter) {
+		sStationsFilterType = filter;
+	}
+
+	/**
+	 * This method will return the mapped pty list values
+	 * 
+	 * @return
+	 */
+	public ArrayList<Integer> getPTYValuesForTheCurrentFilter() {
+		if (mCatUtil == null) {
+			mCatUtil = new CategoriesUtil(this);
+		}
+		Logger.d(CategoriesUtil.TAG,"sStationsFilterType :"+sStationsFilterType);
+		return mCatUtil.getPTYValuesForTheType(sStationsFilterType);
+	}
+
+	public Set<String> getCategoriesInfoFromStationData(StationData[] stationList) {
+		if (mCatUtil == null) {
+			mCatUtil = new CategoriesUtil(this);
+		}
+		return mCatUtil.getCategoriesInformationFromStations(stationList);
+	}
+
+	/**
+	 * This method is used to convert the list of items to array of items
+	 * 
+	 * @param filterList
+	 * @return
+	 */
+	public int[] convertListTointArray(ArrayList<Integer> filterList) {
+		int[] filter = new int[filterList.size()];
+		for (int i = 0; i < filterList.size(); i++) {
+			filter[i] = filterList.get(i);
+		}
+		return filter;
+	}
+	
+	@Override
+	public void onHeaderCloseKey(View view) {
+	    if(sCachedFragments != null && sCachedFragments.size() == 1){
+	    	sCachedFragments.clear();
+			sFragmentTitles.clear();
+	    }
+		super.onHeaderCloseKey(view);
+	    
+	}
+	
+	private OnPageChangeListener mOnPageChangeListener = new OnPageChangeListener() {
+		private boolean selectedByDrag;
+
+		@Override
+		public void onPageSelected(int position) {
+			Logger.d(TAG, "onPageSelected  = "+position);
+			mViewPager.setCurrentItem(position);
+		}
+
+		@Override
+		public void onPageScrolled(int arg0, float arg1, int arg2) {
+			Logger.d(TAG, "onPageScrolled  arg0= "+arg0);
+		}
+
+		@Override
+		public void onPageScrollStateChanged(int state) {
+
+			if (state == ViewPager.SCROLL_STATE_DRAGGING) {
+				selectedByDrag = true;
+				Logger.d(TAG, "onPageScrollStateChanged  state= SCROLL_STATE_DRAGGING");
+			}
+			else if (state == ViewPager.SCROLL_STATE_IDLE) {
+				selectedByDrag = false;
+				Logger.d(TAG, "onPageScrollStateChanged  state= SCROLL_STATE_IDLE");
+			}
+			else if (state == ViewPager.SCROLL_STATE_SETTLING) {
+
+				// We need to update the screen immediately while settling
+				// the
+				// screen itself. So that It will fix the screen updation
+				// issue
+				// (Previous screen items will display for a while)
+				Logger.d(TAG, "onPageScrollStateChanged  state= SCROLL_STATE_SETTLING");
+				if (selectedByDrag) {
+					Logger.d(TAG, "selectedByDrag");
+				}
+			}
+		}
+	};
+	
+	private class FragmentPagerAdapter extends android.support.v4.app.FragmentStatePagerAdapter {
+		
+		public FragmentPagerAdapter(FragmentManager fm) {
+			super(fm);
+		}
+
+		@Override
+		public int getItemPosition(Object object) {
+				AppBrowseFragment f = (AppBrowseFragment) object;
+				if(sCachedFragments.contains(f)){
+					Logger.d(TAG, "return positon of "+f.getArguments().getString(AppBrowseFragment.ARG_MEDIA_ID) +" as POSITION_UNCHANGED");
+					return POSITION_UNCHANGED;
+				}else{
+					Logger.d(TAG, "return positon of "+f.getArguments().getString(AppBrowseFragment.ARG_MEDIA_ID) +" as POSITION_NONE");
+					return POSITION_NONE;
+				}
+
+		}
+		
+		@Override
+		public Fragment getItem(int position) {
+			Logger.d(TAG, "returning fragment at position "+position);
+			return sCachedFragments.get(position);
+		}
+
+		@Override
+		public int getCount() {
+			int count;
+			count = sCachedFragments.size();
+			return count;
+		}
+	}
+}
