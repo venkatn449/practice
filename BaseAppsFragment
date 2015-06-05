@@ -1,0 +1,47 @@
+package com.gm.gmaudio.apps;
+
+import gm.entertainment.MediaAction;
+import gm.media.enums.EnumPlayState;
+import gm.media.enums.EnumShuffleState;
+
+import java.util.List;
+
+import android.content.Context;
+import android.graphics.Bitmap;
+import android.os.Bundle;
+import android.util.Log;
+
+import com.gm.gmaudio.BaseFragment;
+import com.gm.gmaudio.log.Logger;
+
+
+/**
+ * BaseMediaFragment is base class for NowPlayingMediaFragment and
+ * RadioBrowseFragment and contains functionalities common to those fragments
+ * 
+ * @author Harman Automotive
+ */
+public abstract class BaseAppsFragment extends BaseFragment {
+
+
+
+	@Override
+	public void onStart() {
+		super.onStart();
+	}
+
+	@Override
+	public void onPause() {
+		super.onPause();
+
+	}
+
+	@Override
+	public void onResume() {
+		super.onResume();
+	}
+
+	public void setLastAppsSourceMode() {
+		Logger.d("BaseAppsFragment", "setLastAppsSourceMode");
+	}
+}
